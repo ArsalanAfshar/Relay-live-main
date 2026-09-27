@@ -1,0 +1,17 @@
+node_modules
+.git
+.env
+.env.*
+data
+streams
+client/vendor
+artifacts
+test-results
+playwright-report
+*.cookies
+cookies.txt
+.venv
+.cache
+.npm
+test
+*.zip
