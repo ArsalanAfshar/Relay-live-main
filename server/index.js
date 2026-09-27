@@ -1,3 +1,4 @@
+import './init-cookies.js';
 import { config } from './config.js';
 import { Extractor } from './extractor.js';
 import { Pipeline } from './pipeline.js';
