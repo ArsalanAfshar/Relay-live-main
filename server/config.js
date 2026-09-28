@@ -1,5 +1,9 @@
 import 'dotenv/config';
 import path from 'node:path';
+import { cookieStatus } from './init-cookies.js';
+const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+const detectedOrigin = railwayDomain ? `https://${railwayDomain}` : '';
+const railwayRuntime = Boolean(process.env.RAILWAY_ENVIRONMENT || railwayDomain);
 function number(name, fallback, min = 1, max = 1e9) {
   const n = Number(process.env[name] ?? fallback);
   if (!Number.isFinite(n) || n < min || n > max) throw new Error(`Invalid ${name}`);
@@ -9,8 +13,8 @@ const bool = (name, fallback = false) => (process.env[name] ?? String(fallback))
 export const config = {
   port: number('PORT', 3000, 1, 65535),
   production: process.env.NODE_ENV === 'production',
-  publicOrigin: process.env.PUBLIC_ORIGIN || '',
-  trustProxy: number('TRUST_PROXY', 0, 0, 10),
+  publicOrigin: process.env.PUBLIC_ORIGIN || detectedOrigin,
+  trustProxy: number('TRUST_PROXY', railwayRuntime ? 1 : 0, 0, 10),
   streamDir: path.resolve(process.env.STREAM_DIR || './data/streams'),
   maxStreams: number('MAX_STREAMS', 2, 1, 100),
   maxViewers: number('MAX_VIEWERS_PER_STREAM', 250, 1, 100000),
@@ -38,13 +42,16 @@ export const config = {
   segmentSeconds: number('HLS_SEGMENT_SECONDS', 4, 1, 20),
   listSize: number('HLS_LIST_SIZE', 8, 3, 100),
   singleHeight: number('SINGLE_HEIGHT', 720, 144, 2160),
-  abr: bool('ABR_ENABLED'),
-  abrHeights: (process.env.ABR_HEIGHTS || '360,480,720').split(',').map(Number),
+  abr: bool('ABR_ENABLED', true),
+  abrHeights: (process.env.ABR_HEIGHTS || '360,720').split(',').map(Number),
   minFreeMb: number('MIN_FREE_DISK_MB', 128, 0),
   maxDiskMb: number('MAX_HLS_DISK_MB', 400),
   ytDlp: process.env.YT_DLP_PATH || 'yt-dlp',
   ffmpeg: process.env.FFMPEG_PATH || 'ffmpeg',
-  cookies: process.env.YT_DLP_COOKIES_FILE || '',
+  cookies: cookieStatus.valid ? (process.env.YT_DLP_COOKIES_FILE || '') : '',
+  cookieConfigured: cookieStatus.configured,
+  cookieValid: cookieStatus.valid,
+  cookieReason: cookieStatus.reason,
   demo: bool('DEMO_MODE'),
   adminUser: process.env.ADMIN_USER || 'admin',
   adminPassword: process.env.ADMIN_PASSWORD || '',
