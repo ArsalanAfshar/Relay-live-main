@@ -4,10 +4,18 @@ A small, single-instance live-restreaming service with an English/Persian interf
 
 **Use only broadcasts you own or have explicit permission to restream.** Restreaming permissions, YouTube's terms, and applicable laws remain the operator's responsibility. This is not a DRM bypass, general-purpose proxy, recording service, or promise that cloud-origin YouTube extraction will always work.
 
+## What changed in this update
+
+- YouTube extraction is cookie-free first, with a validated raw-cookie-text fallback only after a detected verification/authentication challenge; startup logs explain cookie state without exposing secret content. yt-dlp uses current live-friendly clients/retry settings.
+- Fresh Railway deploys now need only the required `ADMIN_PASSWORD`. Public origin and Railway proxy behavior auto-detect, all other settings have safe defaults, and `PUBLIC_ORIGIN` is only an optional custom-origin override.
+- Added a rolling DVR seek rail with an explicit behind-live state and one-click return to the live edge. Multi-quality ABR now defaults to existing 360p/720p source renditions (no transcoding) and remains configurable for tighter resource budgets.
+- Polished spacing, focus/hover states, controls, and bilingual EN/FA RTL details without adding UI sections or clutter.
+- **Builder-added reliability detail:** raw cookie text is validated before use, written to a uniquely named mode-0600 temporary file, redacted from cookie-authenticated diagnostics, and removed on graceful shutdown.
+
 ## Architecture and choices
 
 ```text
-Browser: EN / فارسی (RTL), HLS.js + <video>, familiar mirrored controls
+Browser: EN / فارسی (RTL), HLS.js + <video>, live-buffer seeking, Auto/manual quality, mirrored controls
     │ same-origin JSON + heartbeat + local HLS only
     ▼
 Node.js / Express (one process, one Railway replica)
@@ -83,39 +91,35 @@ npm start
 docker build -t relay-live .
 docker run --rm -p 3000:3000 \
   -e ADMIN_PASSWORD='replace-with-a-long-random-secret' \
-  -e PUBLIC_ORIGIN=http://localhost:3000 \
   relay-live
 ```
 
-Do not use the example password. Local HTTP is for development only; production Basic auth requires HTTPS. The Docker image supplies all runtime dependencies and vendors client assets automatically. Its default `NODE_ENV=production` refuses to start without a password of at least 16 characters. `tini` and application signal handlers reap child processes. FFmpeg is from Debian security-maintained packages; yt-dlp is pinned to the version tested at build time. Rebuild with a reviewed newer `--build-arg YT_DLP_VERSION=...` as YouTube changes. EJS is installed with yt-dlp's default extras; extraction does not dynamically download remote JS components.
+`PUBLIC_ORIGIN` is optional for local same-origin use. Do not use the example password. Local HTTP is for development only; production Basic auth requires HTTPS. The Docker image supplies runtime dependencies and vendors client assets automatically. Its default `NODE_ENV=production` refuses to start without `ADMIN_PASSWORD` of at least 16 characters. `tini` and application signal handlers reap child processes.
 
-## GitHub → Railway, without post-deploy shell commands
+## YouTube access and cookies
 
-1. Create an empty GitHub repository. From this project directory:
-   ```sh
-   git init
-   git add .
-   git commit -m "Build Relay live restreaming service"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_ACCOUNT/YOUR_REPO.git
-   git push -u origin main
-   ```
-   `.gitignore` excludes `.env`, dependency/cache/build outputs, HLS files, cookies, screenshots, and test artifacts. Never commit authentication cookies or secrets.
-2. In Railway choose **New Project → Deploy from GitHub repo**, authorize access, and select that repository. Keep the repository root as the service root. The checked-in `railway.json` selects the Dockerfile automatically; no custom build or start shell steps are required.
-3. Set service **Variables** before the first successful deployment:
-   - `ADMIN_PASSWORD`: a random secret, at least 16 characters.
-   - `ADMIN_USER=admin` (or your own username).
-   - `NODE_ENV=production` (also the image default).
-   - `TRUST_PROXY=1` for Railway's single trusted ingress. Verify the proxy topology if adding Cloudflare or another proxy; do not blindly trust arbitrary forwarding headers.
-   - `DEMO_MODE=false`, `MAX_STREAMS=2`, `ABR_ENABLED=false` initially.
-   - `PUBLIC_ORIGIN`: set after generating the domain below.
-     All other defaults are listed in `.env.example`. Railway supplies `PORT`; the server binds to `0.0.0.0`.
-4. Generate a Railway public HTTPS domain under service networking. Set `PUBLIC_ORIGIN=https://YOUR-SERVICE.up.railway.app` with **no trailing slash** (or use your custom HTTPS domain).
-5. Deploy the current commit, or redeploy after variables are saved. A first auto-build before setting `ADMIN_PASSWORD` intentionally fails closed; saving the variables and redeploying fixes it. Watch `/health` become healthy and inspect deploy logs.
-6. Keep **one replica**. Use the included zero-overlap/20-second drain configuration, do not enable simultaneous application instances, and avoid deployment while an important broadcast is active. Active streams are not preserved over redeploys. The runtime uses disposable local disk; no volume/database/Redis add-on is required. If attaching a volume, give the runtime user permission to write it and use a dedicated empty `STREAM_DIR`.
-7. Open the public URL and test your authorized live stream. Open `/admin` with your operator credentials. Future `git push` commits to the connected branch automatically build and redeploy.
+Relay always tries YouTube **without cookies first**. Most public live broadcasts work without an account session. The extractor uses yt-dlp's current web-safari/web client path, bounded network/extractor retries, and live HLS formats where available. Cookies are only retried after yt-dlp specifically reports a sign-in, private-video, bot-verification, or similar authentication challenge. A normal offline video, unsupported format, or network timeout does not trigger a cookies-needed message. Cloud IP restrictions can still block extraction; cookies are not a guarantee and cannot fix an actually unavailable stream.
 
-There is no requirement to install anything manually inside a Railway container. Do not override the Docker entrypoint or introduce extra workers. Railway edge logs may include HLS bearer query strings: restrict log access and avoid configuring external URL analytics.
+Only if Relay reports that YouTube requires verification, optionally provide cookies from an account that can legitimately watch the broadcast. The simplest Railway method is one secret variable:
+
+1. In your own desktop browser, sign in to YouTube and open the authorized live broadcast.
+2. Use a reputable browser cookie-export extension to export cookies **for youtube.com in Netscape format** (the file begins with `# Netscape HTTP Cookie File`). Do not share the file or upload it to support chats. Prefer a dedicated account with the least access needed.
+3. Open Railway → Relay service → **Variables**. Add `YT_DLP_COOKIES_CONTENT` and paste the complete file text, including its header/newlines. Save/redeploy. No path or shell command is needed. On startup Relay validates the Netscape rows, writes a uniquely named mode-0600 temporary file (deleted on graceful shutdown), and logs only whether cookies are configured/valid; values are never logged. Startup says they are fallback-only; an actual authentication fallback is logged when used.
+4. If cookies are rejected or expire, export a fresh file and replace the variable. Removing the variable returns the service to cookie-free attempts.
+
+Alternatively set `YT_DLP_COOKIES_FILE` to a readable Netscape-format file path. Never commit cookies. Account cookies can expose private/member-only material and may expire; **do not enable them on an unrestricted public service** without an allowlist and access policy. A cookie cannot bypass YouTube controls or guarantee that a cloud IP will be accepted. Follow the current [yt-dlp YouTube/PO-token guidance](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide); PO tokens and client behavior evolve, so keep yt-dlp updated.
+
+## GitHub → Railway, minimal variables
+
+1. Connect this GitHub repository in Railway (**New Project → Deploy from GitHub repo**) and keep the repository root as the service root. The checked-in `railway.json` selects the Dockerfile, one replica, health check, restart, and drain behavior.
+2. Generate/enable a public domain in Railway service **Networking**. Railway automatically injects `RAILWAY_PUBLIC_DOMAIN` (the hostname, e.g. `your-service.up.railway.app`); Relay detects it and forms the HTTPS public origin. `PUBLIC_ORIGIN` is an optional override only when you want a custom origin. Railway ingress trust is also auto-enabled when Railway runtime variables are present. See Railway's [system-variable reference](https://docs.railway.com/reference/variables).
+3. Set just one required secret: `ADMIN_PASSWORD` (random, at least 16 characters). `ADMIN_USER` defaults to `admin`. Optional `YT_DLP_COOKIES_CONTENT` is only for streams that trigger an authentication challenge; see above. There is no need to paste `PORT`, `NODE_ENV`, `TRUST_PROXY`, media limits, disk paths, binaries, or other defaults. Railway injects `PORT`; the container binds to `0.0.0.0`.
+4. Deploy. A first build before setting `ADMIN_PASSWORD` intentionally fails closed; set it and redeploy. Watch `/health` become healthy and inspect deployment logs. Startup logs state whether cookies are absent/present/valid (never their contents) and whether the public origin came from Railway, an override, or the request host.
+5. Keep **one replica**; do not enable overlapping application instances. Active streams end on deploy. The runtime uses disposable local disk; no volume/database/Redis add-on is required. Future pushes to the connected branch auto-deploy.
+
+Custom setups may override any safe default. `.env.example` lists the full optional configuration set. Railway JSON cannot safely provision secrets, so credentials are intentionally not embedded there; deployment defaults are held in validated application config and `railway.json` contains platform settings.
+
+Railway edge logs may include HLS bearer query strings: restrict log access and avoid configuring external URL analytics.
 
 ### Honest free-plan limits (checked September 27, 2026)
 
@@ -128,7 +132,7 @@ At a hypothetical **2 Mb/s**, one viewer consumes about **0.9 GB/hour** before o
 Practical guidance:
 
 - Treat Free as a short, small-scale proof of operation, not a 24/7 public video platform. There is no fixed unlimited-hours assumption; metered usage and available credit determine usable runtime.
-- Leave ABR off; begin at `MAX_STREAMS=1` or `2`, and reduce `SINGLE_HEIGHT=480` for modest tests. Concurrent yt-dlp metadata extraction and FFmpeg buffers consume memory even in copy mode. The default cap is conservative rather than the suggested VPS-sized 5–10.
+- For very tight free-tier bandwidth, set `ABR_ENABLED=false`; otherwise ABR defaults to existing 360p/720p source renditions with no transcoding. Begin at `MAX_STREAMS=1` or `2`, and if ABR is off reduce `SINGLE_HEIGHT=480` for modest tests. Concurrent yt-dlp metadata extraction and FFmpeg buffers consume memory even in copy mode. The default cap is conservative rather than the suggested VPS-sized 5–10.
 - Shared cloud IPs may be throttled, blocked, or asked for bot verification by YouTube. A correct deploy does not guarantee extraction. The application returns a clear unavailable/timeout error rather than sending the viewer to YouTube.
 - `MIN_FREE_DISK_MB=128` and `MAX_HLS_DISK_MB=400` are application safeguards, not OS quotas. Segment/keyframe sizes vary; files are checked every maintenance interval, so a short overshoot is possible. Large individual writes or the platform's own disk usage may still exhaust a tiny filesystem.
 - Source expiry, Railway resource limits, and upstream restrictions can interrupt long sessions. Keep usage alerts enabled and verify plan spend/credit behavior in your account.
@@ -152,15 +156,15 @@ Channel discovery is distinct from a media pipeline: different channel aliases c
 
 - yt-dlp runs without a shell, ignores machine config, disables playlists/downloads, and returns live metadata and source URLs. The extracted ID must match the reserved ID.
 - Accepted sources use HTTPS and YouTube/Googlevideo domains. FFmpeg's input protocol list excludes local files/concat and unsupported protocols. Nested redirects/manifests still rely on trusted YouTube media infrastructure; this is not a full network firewall. Keep binaries updated and use egress firewall rules if your environment requires stronger SSRF isolation.
-- Default: choose the best available H.264/AAC source at or below `SINGLE_HEIGHT=720`. Sources requiring other codecs fail clearly rather than silently burning CPU on transcoding. Separate AAC audio is mapped when necessary.
+- With ABR disabled, Relay chooses the best available H.264/AAC source at or below `SINGLE_HEIGHT=720`. Sources requiring other codecs fail clearly rather than silently burning CPU on transcoding. Separate AAC audio is mapped when necessary.
 - FFmpeg writes local media playlists and `.ts` segments under the ID folder; a local `stream.m3u8` master is published only after every selected rendition has at least one nonempty segment.
-- `ABR_ENABLED=true`, `ABR_HEIGHTS=360,480,720` selects existing source qualities (up to four configured heights). Missing/duplicate qualities collapse to available renditions. **One FFmpeg process handles all inputs and outputs**, reusing common audio input, with `-c copy` for each output. HLS.js switches automatically or the viewer can choose a quality.
-- No upscaling or invented renditions. ABR costs additional upstream bandwidth, disk writes, buffers, and sockets even without encoding. Seamless switching depends on aligned upstream timestamps/keyframes; validate it against your own broadcast. Default copy mode cannot force keyframes. Native-HLS-only browsers get native adaptive selection, not manual rendition selection.
+- `ABR_ENABLED=true`, `ABR_HEIGHTS=360,720` selects existing source qualities (up to four configured heights). Missing/duplicate qualities collapse to available renditions. **One FFmpeg process handles all inputs and outputs**, reusing common audio input, with `-c copy` for each output. ABR is enabled by default at efficient 360p/720p caps; unavailable/duplicate source qualities collapse to what actually exists. HLS.js switches automatically or the viewer can choose a quality. Set `ABR_ENABLED=false` to reduce source bandwidth and sockets.
+- No upscaling or invented renditions. ABR costs additional upstream bandwidth, disk writes, buffers, and sockets even without encoding. The DVR seek rail covers only the rolling HLS window (default about 32 seconds), not the full broadcast; use its live-edge control to return. Seamless switching depends on aligned upstream timestamps/keyframes; validate it against your own broadcast. Default copy mode cannot force keyframes. Native-HLS-only browsers get native adaptive selection, not manual rendition selection. HLS.js viewers get manual selection when at least two distinct source renditions are available.
 - Playlist routes reject external/unknown URIs, then add a viewer lease token to **local** child URLs. There is no endpoint that forwards arbitrary URLs. Playlists are never cached; generation-specific segments have short private caching.
 
 ### Viewer lifecycle, ends, and errors
 
-Each attachment gets an unpredictable viewer token. Heartbeats default to 12 seconds, leases expire after 45 seconds, and authenticated HLS requests also refresh activity (helpful for background tabs). Leaving sends a best-effort release; a crashed browser is removed after expiry. Paused/backgrounded browsers may lose their lease if neither heartbeats nor HLS requests arrive.
+Each attachment gets an unpredictable viewer token. Heartbeats default to 12 seconds, leases expire after 45 seconds, and authenticated HLS requests also refresh activity (helpful for background tabs). Leaving sends a best-effort release; a crashed browser is removed after expiry. Paused/backgrounded browsers may lose their lease if neither heartbeats nor HLS requests arrive. The player retains a short rolling DVR window (default 8 segments × 4 seconds) and marks viewers behind live separately from the stream’s still-live status.
 
 When the final viewer leaves/expires, the configurable **120-second zero-viewer grace** begins. Rejoining cancels the grace. Maintenance stops child process groups and removes output files after expiry. Abandoned tabs therefore cost at most lease expiry + grace + one maintenance interval, not zero time.
 
@@ -179,13 +183,13 @@ Invalid syntax fails immediately. Valid-looking but not-live/unavailable inputs 
 
 ## Configuration reference
 
-Copy `.env.example`; it documents every runtime setting. Environment values win over `.env`. Defaults are centralized and validated in `server/config.js`.
+Every non-secret setting has a code default; a fresh Railway deploy needs only `ADMIN_PASSWORD`. `PUBLIC_ORIGIN` and `YT_DLP_COOKIES_CONTENT` are optional. For local configuration, copy `.env.example`; environment values win over `.env`. Defaults are centralized and validated in `server/config.js`.
 
 | Group                  | Variables                                                                                                             |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | HTTP / deployment      | `PORT`, `NODE_ENV`, `PUBLIC_ORIGIN`, `TRUST_PROXY`                                                                    |
 | Operator / policy      | `ADMIN_USER`, `ADMIN_PASSWORD`, `ALLOWED_VIDEO_IDS`                                                                   |
-| Storage / binary paths | `STREAM_DIR`, `YT_DLP_PATH`, `FFMPEG_PATH`, `YT_DLP_COOKIES_FILE`                                                     |
+| Storage / binary paths | `STREAM_DIR`, `YT_DLP_PATH`, `FFMPEG_PATH`, `YT_DLP_COOKIES_CONTENT`, `YT_DLP_COOKIES_FILE`                           |
 | Capacity               | `MAX_STREAMS`, `MAX_VIEWERS_PER_STREAM`, `MAX_RESOLVERS`                                                              |
 | Viewer / cleanup       | `HEARTBEAT_SECONDS`, `VIEWER_TTL_SECONDS`, `IDLE_GRACE_SECONDS`, `MAINTENANCE_SECONDS`                                |
 | Deadlines / retry      | `EXTRACT_TIMEOUT_SECONDS`, `STARTUP_TIMEOUT_SECONDS`, `EXTRACT_RETRIES`, `RETRY_BASE_MS`, `STALL_TIMEOUT_SECONDS`     |
@@ -197,7 +201,7 @@ Copy `.env.example`; it documents every runtime setting. Environment values win 
 
 Use literal `true`/`false` for booleans. `HEARTBEAT_SECONDS` must be smaller than `VIEWER_TTL_SECONDS`. `ALLOWED_VIDEO_IDS` is blank for open submission or a comma-separated list of approved IDs. Disallowed IDs never start pipelines; channel metadata discovery is still needed before the policy can be evaluated.
 
-Optional operator-provided cookies must be in Netscape cookie-file format, readable/writable by the runtime user, and kept outside the public/static tree. They may permit access to the operator's private videos: **never enable account cookies on an unrestricted public service without an allowlist/access policy.** They do not guarantee YouTube will accept a cloud IP. No cookies are included or requested by the frontend.
+Cookies are optional and only retried after a cookie-free auth/verification failure. `YT_DLP_COOKIES_CONTENT` accepts a pasted Netscape export; `YT_DLP_COOKIES_FILE` remains available for file-based installs. Validation checks format, never logs values, and startup clearly reports configured/valid/fallback-only state. Account cookies may permit access to private videos: **never use them on an unrestricted public service without an allowlist/access policy.** They do not guarantee a cloud IP will be accepted. No cookies are included or requested by the frontend.
 
 ## Additional features added by the builder
 
@@ -217,7 +221,7 @@ Every item below is **Added by builder — not explicitly requested.** The reque
 ## Tests and operator-owned live verification
 
 ```sh
-npm test                        # 18 unit/process/HTTP integration tests
+npm test                        # 21 unit/process/HTTP integration tests
 npm run check
 npx playwright install --with-deps chromium
 npm run test:e2e                 # requires FFmpeg; runs its own temporary test server
@@ -232,7 +236,7 @@ Manual real-source checklist:
 3. Open a second tab with the same ID via `youtu.be`, then the channel URL. `/admin` should show one active entry/FFmpeg PID and multiple viewers. There may be short channel-discovery yt-dlp processes, not multiple media pipelines.
 4. Inspect browser Network: only your own origin; all `.m3u8` entries refer to your local variants/segments. Do not paste signed URLs or tokens into public tickets.
 5. Switch فارسی; verify the whole page/control row mirrors, Persian fonts load locally, long titles and input behave correctly, and play/pause, mute, volume, live edge, and fullscreen work. Test your target Safari/iOS devices as well as desktop Chromium.
-6. If enabling ABR, repeat with your own multi-quality source and throttled browser bandwidth. Verify only available qualities are listed and input renditions align.
+6. With ABR enabled, repeat with your own multi-quality source and throttled browser bandwidth. Verify only available qualities are listed, manual quality switching works, and input renditions align.
 7. End your broadcast in YouTube Studio. Verify all tabs show “This live stream has ended” / «این پخش زنده به پایان رسید». Also test operator Stop and a temporary source-network failure.
 8. Leave all tabs; after release or lease expiry plus the grace period, check that the FFmpeg PID and ID directory disappear. Ctrl-C the server while starting/playing and confirm children exit.
 9. Set `MAX_STREAMS=1`, start one owned broadcast, and submit another owned live ID to see capacity handling. Join the first again to confirm capacity does not block deduplicated viewers. Exercise invalid, recorded, and offline-channel links.
@@ -243,7 +247,7 @@ Manual real-source checklist:
 
 - **One application instance only.** An in-memory registry cannot enforce a global pipeline guarantee across independent replicas, deploy overlap, or multiple machines. Local files also belong to their owner. The provided config disables deliberate overlap, but verify platform rollout behavior; coordinated global ownership requires the next architecture below.
 - A distributed `StreamRegistry` needs **atomic admission, distributed leases/locks, ownership fencing, crash recovery, and generation-aware routing**. Simply replacing a Map with Redis GET/SET is insufficient. Add sticky/routed HLS to the owner or shared object storage/CDN, and account for CDN token/cache-key semantics. A media worker pool and Redis control plane are natural next steps.
-- HLS is buffered live delivery, not WebRTC/ultra-low-latency. Actual delay depends on upstream latency, keyframe intervals, fragment duration, and player buffers. No DVR, seeking through an archive, subtitles extraction, chat, DRM, or persisted sessions are implied.
+- HLS is buffered live delivery, not WebRTC/ultra-low-latency. Actual delay depends on upstream latency, keyframe intervals, fragment duration, and player buffers. Seeking is limited to the server's rolling HLS window (not an archive); subtitles extraction, chat, DRM, and persisted sessions are not included.
 - Global max pipelines protects processing; it does not stop distributed request floods or bandwidth exhaustion by allowed viewers. For an internet-facing paid deployment, add an identity/access layer, ingress/WAF quotas and egress budgets. IP limits can aggregate users behind NAT and can be evaded with many addresses.
 - Lease tokens are possession-based, not strong user authentication. Same-origin protections are browser defenses, not authorization for server-to-server clients. A private deployment should be behind an authenticated gateway in addition to the optional ID allowlist.
 - Auto-selected H.264/AAC formats and upstream live manifests can change. Update/retest yt-dlp/FFmpeg/HLS.js regularly. Private/restricted/age-gated/geoblocked broadcasts may be unavailable. The service fails explicitly rather than embedding YouTube or transcoding unexpectedly.

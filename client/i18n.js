@@ -56,6 +56,8 @@ export const strings = {
     fullscreen: 'Fullscreen',
     exitFullscreen: 'Exit fullscreen',
     goLive: 'Go to live edge',
+    behindLive: 'BEHIND LIVE',
+    seek: 'Seek within the live buffer',
     auto: 'Auto',
     network: 'Couldn’t reach our server. Check your connection and try again.',
     playbackError: 'Playback was interrupted. Try opening the stream again.',
@@ -70,8 +72,12 @@ export const strings = {
     DISK_LOW: 'Our server needs a little breathing room. Please try again shortly.',
     RESOLVE_TIMEOUT: 'YouTube took too long to respond. Please try again.',
     STARTUP_TIMEOUT: 'The stream could not start in time. Please try again.',
+    COOKIE_REQUIRED:
+      'YouTube is asking the server to verify this stream. The operator can add a YouTube cookies export in YT_DLP_COOKIES_CONTENT, then try again.',
+    COOKIE_CONFIG_INVALID:
+      'The operator-provided YouTube cookies are not valid Netscape cookie text. Contact the operator to replace them; cookie-free access was still tried.',
     SOURCE_UNAVAILABLE:
-      'This source is private, unavailable, or requires YouTube verification. Contact the operator.',
+      'This source is private, unavailable, or still blocked after the available YouTube access options. Contact the operator.',
     UNSUPPORTED_FORMAT:
       'No compatible H.264/AAC live rendition is available at the configured quality.',
     UPSTREAM_ERROR:
@@ -149,6 +155,8 @@ export const strings = {
     fullscreen: 'تمام‌صفحه',
     exitFullscreen: 'خروج از تمام‌صفحه',
     goLive: 'رفتن به لحظه زنده',
+    behindLive: 'چند لحظه عقب‌تر',
+    seek: 'جست‌وجو در بافر پخش زنده',
     auto: 'خودکار',
     network: 'اتصال به سرور ممکن نشد. اینترنت را بررسی کن و دوباره تلاش کن.',
     playbackError: 'پخش قطع شد. برای اتصال دوباره لینک را باز کن.',
@@ -162,8 +170,12 @@ export const strings = {
     DISK_LOW: 'سرور به کمی فضای آزاد نیاز دارد. کمی بعد دوباره تلاش کن.',
     RESOLVE_TIMEOUT: 'پاسخ یوتیوب بیش از حد طول کشید. دوباره تلاش کن.',
     STARTUP_TIMEOUT: 'پخش در زمان مقرر شروع نشد. دوباره تلاش کن.',
+    COOKIE_REQUIRED:
+      'یوتیوب از سرور می‌خواهد این پخش را تأیید کند. مدیر سرویس می‌تواند خروجی کوکی یوتیوب را در YT_DLP_COOKIES_CONTENT قرار دهد و دوباره تلاش کند.',
+    COOKIE_CONFIG_INVALID:
+      'کوکی‌های یوتیوب واردشده معتبر نیستند. از مدیر سرویس بخواه آن‌ها را با متن Netscape معتبر جایگزین کند؛ دسترسی بدون کوکی هم امتحان شده است.',
     SOURCE_UNAVAILABLE:
-      'این منبع خصوصی یا در دسترس نیست یا به تأیید یوتیوب نیاز دارد. با مدیر سرویس تماس بگیر.',
+      'این منبع خصوصی یا در دسترس نیست، یا پس از روش‌های دسترسی موجود همچنان مسدود است. با مدیر سرویس تماس بگیر.',
     UNSUPPORTED_FORMAT: 'کیفیت زنده سازگار با H.264 و AAC در محدوده تنظیم‌شده موجود نیست.',
     UPSTREAM_ERROR: 'دریافت این پخش از یوتیوب ممکن نشد. لینک را بررسی کن یا کمی بعد تلاش کن.',
     DEPENDENCY_MISSING: 'سرویس پخش کامل پیکربندی نشده است. با مدیر سرویس تماس بگیر.',

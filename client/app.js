@@ -16,7 +16,8 @@ let session = null,
   failures = 0,
   polling = false,
   playbackRecoveries = 0,
-  requestGeneration = 0;
+  requestGeneration = 0,
+  seeking = false;
 const t = (k) => strings[lang][k] || strings[lang].INTERNAL;
 const show = (id, visible) => {
   $(id).hidden = !visible;
@@ -45,6 +46,7 @@ function localize() {
     ['volume', 'volume'],
     ['fullscreen', document.fullscreenElement ? 'exitFullscreen' : 'fullscreen'],
     ['live-edge', 'goLive'],
+    ['seek', 'seek'],
     ['quality', 'quality'],
   ])
     $(id).setAttribute('aria-label', t(key));
@@ -115,6 +117,7 @@ function clearPlayer() {
     hls = null;
   }
   video.pause();
+  seeking = false;
   video.removeAttribute('src');
   video.load();
   show('video', false);
@@ -245,9 +248,9 @@ function startPlayer(manifest) {
     hls = new Hls({
       enableWorker: true,
       liveSyncDurationCount: 3,
-      maxBufferLength: 24,
-      maxMaxBufferLength: 40,
-      backBufferLength: 15,
+      maxBufferLength: 40,
+      maxMaxBufferLength: 60,
+      backBufferLength: 45,
       manifestLoadingMaxRetry: 3,
       fragLoadingMaxRetry: 3,
     });
@@ -300,6 +303,7 @@ function updateControls() {
   $('mute').setAttribute('aria-pressed', String(video.muted));
   $('mute').style.opacity = video.muted ? '.45' : '1';
   $('volume').value = video.muted ? 0 : video.volume;
+  updateTimeline();
 }
 $('play').onclick = () => {
   if (video.paused) void tryPlay();
@@ -315,10 +319,49 @@ $('volume').oninput = () => {
   video.muted = video.volume === 0;
   updateControls();
 };
+function liveWindow() {
+  const ranges = video.seekable.length ? video.seekable : video.buffered;
+  if (!ranges.length) return null;
+  const i = ranges.length - 1;
+  return { start: ranges.start(i), end: ranges.end(i) };
+}
+function livePosition(window = liveWindow()) {
+  if (!window) return null;
+  const preferred = Number(hls?.liveSyncPosition);
+  return Number.isFinite(preferred) && preferred >= window.start && preferred <= window.end
+    ? preferred
+    : Math.max(window.start, window.end - 1);
+}
+function updateTimeline() {
+  const seek = $('seek'), window = liveWindow();
+  if (!window || window.end <= window.start) return;
+  const duration = window.end - window.start;
+  seek.max = String(duration);
+  if (!seeking) seek.value = String(Math.max(0, Math.min(duration, video.currentTime - window.start)));
+  seek.style.setProperty('--seek-progress', `${Math.max(0, Math.min(100, Number(seek.value) / duration * 100))}%`);
+  const behind = window.end - video.currentTime > 4;
+  $('live-edge').classList.toggle('behind-live', behind);
+  $('live-edge').querySelector('[data-i18n="live"]').textContent = t(behind ? 'behindLive' : 'live');
+  $('live-edge').setAttribute('aria-label', t(behind ? 'goLive' : 'live'));
+}
+$('seek').addEventListener('input', () => {
+  const window = liveWindow();
+  if (!window) return;
+  seeking = true;
+  const seek = $('seek');
+  seek.style.setProperty('--seek-progress', `${Number(seek.value) / Number(seek.max || 1) * 100}%`);
+});
+$('seek').addEventListener('change', () => {
+  const window = liveWindow();
+  if (window) video.currentTime = Math.min(window.end - 0.25, window.start + Number($('seek').value));
+  seeking = false;
+  updateTimeline();
+});
 $('live-edge').onclick = () => {
-  if (hls?.liveSyncPosition) video.currentTime = hls.liveSyncPosition;
-  else if (video.seekable.length)
-    video.currentTime = video.seekable.end(video.seekable.length - 1) - 1;
+  const window = liveWindow();
+  const target = livePosition(window);
+  if (target !== null) video.currentTime = target;
+  seeking = false;
   void tryPlay();
 };
 $('fullscreen').onclick = async () => {
@@ -346,6 +389,8 @@ video.addEventListener('playing', () => {
 });
 video.addEventListener('pause', updateControls);
 video.addEventListener('volumechange', updateControls);
+for (const event of ['timeupdate', 'progress', 'loadedmetadata', 'durationchange', 'seeked'])
+  video.addEventListener(event, updateTimeline);
 video.addEventListener('error', () => {
   if (state === 'live' && !hls)
     void poll().then(() => {

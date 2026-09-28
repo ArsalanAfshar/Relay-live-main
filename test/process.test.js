@@ -6,6 +6,13 @@ import os from 'node:os';
 import { capture } from '../server/process.js';
 import { Extractor } from '../server/extractor.js';
 import { config } from '../server/config.js';
+import { validateCookies } from '../server/init-cookies.js';
+test('Netscape cookie validation accepts exported rows and rejects malformed text', () => {
+  const valid = '# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t1999999999\tSID\tvalue\n';
+  assert.equal(validateCookies(valid).valid, true);
+  assert.equal(validateCookies('# Netscape HTTP Cookie File\nnot a cookie').valid, false);
+});
+
 test('process timeout terminates the complete child process group', async () => {
   let child;
   const start = Date.now();
@@ -69,6 +76,43 @@ test('channel without current broadcast returns CHANNEL_NOT_LIVE', async () => {
     await assert.rejects(extractor.channel('https://youtube.com/@owner/live'), {
       code: 'CHANNEL_NOT_LIVE',
     });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('cookie-free YouTube extraction happens before auth-only cookie fallback', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'relay-cookie-fallback-'));
+  const script = path.join(dir, 'fake-yt-dlp');
+  try {
+    await writeFile(
+      script,
+      `#!/usr/bin/env node\nconst a=process.argv.slice(2);if(!a.includes('--cookies')){console.error("Sign in to confirm you're not a bot");process.exit(1)}console.log(JSON.stringify({id:'abcdefghijk',live_status:'is_live',title:'Test'}));\n`,
+      { mode: 0o755 },
+    );
+    const extractor = new Extractor({
+      ...config,
+      ytDlp: script,
+      cookies: '/tmp/test-cookie-file.txt',
+      cookieConfigured: true,
+      cookieValid: true,
+      extractTimeoutMs: 3000,
+      extractRetries: 0,
+    });
+    const info = await extractor.extract('https://youtube.com/watch?v=abcdefghijk');
+    assert.equal(info.id, 'abcdefghijk');
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('cookie-needed state is only returned for recognized auth challenges', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'relay-cookie-required-'));
+  const script = path.join(dir, 'fake-yt-dlp');
+  try {
+    await writeFile(script, `#!/usr/bin/env node\nconsole.error("Sign in to confirm you're not a bot");process.exit(1);\n`, { mode: 0o755 });
+    const extractor = new Extractor({ ...config, ytDlp: script, cookies: '', cookieConfigured: false, extractRetries: 0 });
+    await assert.rejects(extractor.extract('https://youtube.com/watch?v=abcdefghijk'), { code: 'COOKIE_REQUIRED' });
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
